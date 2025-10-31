@@ -78,7 +78,7 @@ if audio_file is not None:
     # 🧠 Generate Gemini Response
     # -------------------------------------------
     with st.spinner("💬 Thinking..."):
-        model = genai.GenerativeModel("gemini-1.5-pro")
+        model = genai.GenerativeModel("gemini-2.5-pro")
         chat_history = "\n".join(
             [f"{m['role'].capitalize()}: {m['content']}" for m in st.session_state.conversation]
         )

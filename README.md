@@ -1,5 +1,4 @@
-# 🩺 AI Medical Voice Agent (Gemini)
-
+# 🩺 AI Medical Voice Agent (Gemini)and Recommondation system
 An interactive Streamlit app that lets users speak or upload questions to receive safe, factual medical information using Google’s Gemini model.
 
 ## 🚀 Features

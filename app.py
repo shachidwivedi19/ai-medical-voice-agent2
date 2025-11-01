@@ -14,38 +14,23 @@ except KeyError:
     st.error("⚠️ GOOGLE_API_KEY not found in secrets. Please add it in Streamlit Cloud settings.")
     st.stop()
 
-# -------------------------------------------
-# 🎨 Streamlit UI Setup
-# -------------------------------------------
 st.set_page_config(page_title="AI Medical Voice Agent", page_icon="🩺", layout="centered")
 st.title("🩺 AI Medical Voice Agent (Gemini)")
 st.caption("Speak or upload your question. The AI provides safe, factual, and general medical guidance — not diagnosis or prescription.")
 
-# -------------------------------------------
-# 🧠 Initialize Conversation Memory
-# -------------------------------------------
 if "conversation" not in st.session_state:
     st.session_state.conversation = []
 
-# -------------------------------------------
-# 🩺 Medical Mode Selector
-# -------------------------------------------
 mode = st.selectbox(
     "🩹 Select Consultation Mode:",
     ["General Health", "Medicine Info", "Nutrition & Diet", "Mental Health Support"]
 )
 
-# -------------------------------------------
-# 🌐 Language Selector
-# -------------------------------------------
 lang = st.selectbox(
     "🌍 Response Language:",
     ["en", "hi", "es", "fr"]
 )
 
-# -------------------------------------------
-# 🎙️ Audio Input (Streamlit native)
-# -------------------------------------------
 audio_file = st.audio_input("🎤 Record your question")
 
 if audio_file is not None:

@@ -5,14 +5,12 @@ import google.generativeai as genai
 import tempfile
 import os
 
-# -------------------------------------------
-# 🔐 Load Gemini API key
-# -------------------------------------------
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 except KeyError:
     st.error("⚠️ GOOGLE_API_KEY not found in secrets. Please add it in Streamlit Cloud settings.")
     st.stop()
+
 
 st.set_page_config(page_title="AI Medical Voice Agent", page_icon="🩺", layout="centered")
 st.title("🩺 AI Medical Voice Agent (Gemini)")
@@ -20,7 +18,7 @@ st.caption("Speak or upload your question. The AI provides safe, factual, and ge
 
 if "conversation" not in st.session_state:
     st.session_state.conversation = []
-
+    
 mode = st.selectbox(
     "🩹 Select Consultation Mode:",
     ["General Health", "Medicine Info", "Nutrition & Diet", "Mental Health Support"]
@@ -59,9 +57,6 @@ if audio_file is not None:
 
     os.unlink(audio_path)
 
-    # -------------------------------------------
-    # 🧠 Generate Gemini Response
-    # -------------------------------------------
     with st.spinner("💬 Thinking..."):
         model = genai.GenerativeModel("gemini-2.5-pro")
         chat_history = "\n".join(
@@ -80,9 +75,7 @@ if audio_file is not None:
             st.error(f"⚠ Gemini error: {e}")
             st.stop()
 
-    # -------------------------------------------
-    # 💬 Chat Bubbles (UI)
-    # -------------------------------------------
+    
     st.subheader("💬 Chat History")
     for msg in st.session_state.conversation:
         if msg["role"] == "user":
@@ -96,9 +89,6 @@ if audio_file is not None:
                 unsafe_allow_html=True,
             )
 
-    # -------------------------------------------
-    # 🔊 Text-to-Speech Response
-    # -------------------------------------------
     try:
         tts = gTTS(ai_text, lang=lang)
         audio_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -108,8 +98,5 @@ if audio_file is not None:
     except Exception as e:
         st.warning(f"Speech synthesis failed: {e}")
 
-# -------------------------------------------
-# ⚠️ Disclaimer
-# -------------------------------------------
 st.divider()
 st.caption("⚠️ This AI provides general medical information only. It is **not a substitute** for professional diagnosis or treatment.")

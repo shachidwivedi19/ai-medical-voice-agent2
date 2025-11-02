@@ -424,6 +424,8 @@ def show_dashboard():
             else:
                 st.info("No reports uploaded yet.")
 
+                
+
     # -----------------------
     # Tab 4: Appointments (form saved to DB)
     # -----------------------
@@ -581,5 +583,5 @@ def main():
         else:
             signup_ui()
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()

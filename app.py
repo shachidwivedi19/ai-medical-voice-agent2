@@ -1,3 +1,4 @@
+
 # app.py
 import streamlit as st
 import sqlite3
@@ -11,29 +12,26 @@ import speech_recognition as sr
 from gtts import gTTS
 from PIL import Image
 import google.generativeai as genai
+import matplotlib.pyplot as plt
+from io import BytesIO
 
-# -----------------------
-# CONFIG
-# -----------------------
 st.set_page_config(page_title="AI Medical Dashboard", page_icon="🏥", layout="wide")
-
-# Configure Gemini (use Streamlit secrets or fallback)
 API_KEY = st.secrets.get("GOOGLE_API_KEY", None) or "YOUR_API_KEY_HERE"
+
+# Try to configure Gemini, but keep app usable if key missing
 try:
     genai.configure(api_key=API_KEY)
-except Exception as e:
-    # We'll show a warning but do not hard-stop (some parts can still run)
-    st.warning("Warning: Gemini API configuration failed. Add valid GOOGLE_API_KEY in Streamlit secrets.")
-    # Optionally: st.stop() if you want to force key presence
+except Exception:
+    st.warning("Warning: Gemini API configuration failed or key missing. AI features may not work here.")
 
 # -----------------------
-# DATABASE (users + appointments + reports)
+# DATABASE (users + appointments + reports + prescriptions)
 # -----------------------
 DB_PATH = "app_data.db"
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 c = conn.cursor()
 
-# Users table
+# Create tables if missing
 c.execute(
     """
 CREATE TABLE IF NOT EXISTS users (
@@ -42,7 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """
 )
-# Appointments table
+
 c.execute(
     """
 CREATE TABLE IF NOT EXISTS appointments (
@@ -65,7 +63,7 @@ CREATE TABLE IF NOT EXISTS appointments (
 )
 """
 )
-# Reports metadata table
+
 c.execute(
     """
 CREATE TABLE IF NOT EXISTS medical_reports (
@@ -80,11 +78,24 @@ CREATE TABLE IF NOT EXISTS medical_reports (
 )
 """
 )
+
+# New: prescriptions table
+c.execute(
+    """
+CREATE TABLE IF NOT EXISTS prescriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    symptoms TEXT,
+    suggestion TEXT,
+    created_at TEXT
+)
+"""
+)
+
 conn.commit()
 
-# -----------------------
+
 # UTILS - hashing & session
-# -----------------------
 def make_hash(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -95,10 +106,11 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "user" not in st.session_state:
     st.session_state.user = None
+if "cart" not in st.session_state:
+    st.session_state.cart = {}
 
-# -----------------------
-# STYLE (make it visually closer to screenshot)
-# -----------------------
+
+# STYLE
 st.markdown(
     """
     <style>
@@ -131,9 +143,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -----------------------
 # AUTH: signup & login
-# -----------------------
+
 def signup_ui():
     st.header("Create an account")
     with st.form("signup_form", clear_on_submit=True):
@@ -172,14 +183,14 @@ def login_ui():
                 st.session_state.logged_in = True
                 st.session_state.user = username
                 st.success(f"Welcome, {username}!")
-                time.sleep(0.8)
+                time.sleep(0.6)
                 st.experimental_rerun()
             else:
                 st.error("Invalid username or password.")
 
-# -----------------------
+
 # Helper: save uploaded file to local folder and DB metadata
-# -----------------------
+
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -197,9 +208,8 @@ def save_medical_report(username, file_uploader_obj, name, report_type, date_val
     conn.commit()
     return True
 
-# -----------------------
-# AUDIO: record using sounddevice OR file upload fallback
-# -----------------------
+
+# AUDIO: record using sounddevice OR file upload 
 try:
     import sounddevice as sd  # may fail in some environments
     SD_AVAILABLE = True
@@ -242,9 +252,8 @@ def tts_play(text, lang="en"):
     except:
         pass
 
-# -----------------------
 # Gemini helper (wrap to avoid hard crash)
-# -----------------------
+
 def gemini_medical_answer(user_prompt, mode="General Health", lang="en"):
     """Call Gemini and return text (handles exceptions)"""
     try:
@@ -258,16 +267,34 @@ def gemini_medical_answer(user_prompt, mode="General Health", lang="en"):
         text = resp.text if hasattr(resp, "text") else str(resp)
         return text
     except Exception as e:
-        # Return a helpful fallback message
         return f"(Gemini error: {e})\nI couldn't fetch an AI response — check API key/network."
 
-# -----------------------
+
+# PRESCRIPTION UTILITIES
+def save_prescription_to_db(username: str, symptoms: str, suggestion: str):
+    c.execute(
+        "INSERT INTO prescriptions (username, symptoms, suggestion, created_at) VALUES (?, ?, ?, ?)",
+        (username, symptoms, suggestion, time.strftime("%Y-%m-%d %H:%M")),
+    )
+    conn.commit()
+
+def get_user_prescriptions(username: str):
+    c.execute("SELECT id, symptoms, suggestion, created_at FROM prescriptions WHERE username=? ORDER BY created_at DESC", (username,))
+    return c.fetchall()
+
+def delete_prescription(pid: int):
+    c.execute("DELETE FROM prescriptions WHERE id=?", (pid,))
+    conn.commit()
+
+def prescription_to_bytes(symptoms: str, suggestion: str, created_at: str, username: str):
+    txt = f"Prescription for {username}\nCreated at: {created_at}\n\nSymptoms:\n{symptoms}\n\nSuggestion (Educational Only):\n{suggestion}\n\n⚠ This is educational content only. Not a medical prescription."
+    b = txt.encode("utf-8")
+    return BytesIO(b)
 # UI: The big dashboard (shown after login)
-# -----------------------
 def show_dashboard():
-    # Top header area (like screenshot)
+    # Top header area
     st.markdown("<div style='padding:18px 6px 6px 6px'>", unsafe_allow_html=True)
-    st.markdown("<h1 class='big-title'>MedMind AI Agent</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='big-title'>Your Complete Healthcare Companion</h1>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---")
 
@@ -276,9 +303,8 @@ def show_dashboard():
         ["Voice Consultation", "Image Analysis", "Medical Reports", "Appointments", "Prescriptions & Pharmacy", "Health Dashboard"]
     )
 
-    # -----------------------
     # Tab 1: Voice Consultation
-    # -----------------------
+    
     with tabs[0]:
         st.header("🎙 Voice Consultation")
         st.write("Speak or upload your question. The AI provides general medical information only.")
@@ -297,7 +323,6 @@ def show_dashboard():
                     try:
                         audio_path = record_sound_device(rec_dur)
                         st.success("Recording saved.")
-                        # show audio player
                         st.audio(audio_path)
                         user_text = transcribe_audio_file(audio_path)
                         if user_text:
@@ -315,7 +340,6 @@ def show_dashboard():
 
             uploaded_audio = st.file_uploader("Or upload audio (wav/mp3)", type=["wav", "mp3"])
             if uploaded_audio and not user_text:
-                # save to temp and transcribe
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_audio.name)[1])
                 tmp.write(uploaded_audio.read())
                 tmp.flush()
@@ -331,11 +355,7 @@ def show_dashboard():
                 else:
                     st.error("Could not transcribe uploaded audio.")
 
-            # Text fallback
-            if st.text_area("Or type your question:", "", key="voice_text_input"):
-                typed = st.session_state["voice_text_input"]
-            else:
-                typed = None
+            typed = st.text_area("Or type your question:", "", key="voice_text_input")
             if not user_text and typed:
                 user_text = typed
 
@@ -345,6 +365,10 @@ def show_dashboard():
                         ai_text = gemini_medical_answer(user_text, mode=mode, lang=lang)
                         st.markdown("### 🤖 AI Response")
                         st.write(ai_text)
+                        # Save to in-memory history
+                        if "history" not in st.session_state:
+                            st.session_state.history = []
+                        st.session_state.history.append({"q": user_text, "a": ai_text, "time": time.time()})
                         # TTS
                         try:
                             tts_play(ai_text, lang=lang)
@@ -355,7 +379,6 @@ def show_dashboard():
             st.subheader("💬 Chat History")
             if "history" not in st.session_state:
                 st.session_state.history = []
-            # display last 6 messages
             for entry in st.session_state.history[-6:]:
                 st.markdown(f"You: {entry['q']}")
                 st.markdown(f"AI: {entry['a']}")
@@ -375,9 +398,9 @@ def show_dashboard():
                     unsafe_allow_html=True,
                 )
 
-    # -----------------------
-    # Tab 2: Image Analysis (placeholder)
-    # -----------------------
+    
+    # Tab 2: Image Analysis
+    
     with tabs[1]:
         st.header("🩻 Medical Image Analysis")
         st.write("Upload an image (X-ray, MRI, skin lesion). This is a demo placeholder.")
@@ -387,9 +410,8 @@ def show_dashboard():
             st.image(img, caption="Uploaded image", use_column_width=True)
             st.info("Image analysis with Gemini/vision would go here (requires image->model integration).")
 
-    # -----------------------
-    # Tab 3: Medical Reports
-    # -----------------------
+
+    # Tab 3: Medical Report
     with tabs[2]:
         st.header("📄 Medical Reports")
         st.write("Upload your reports (PDF/image) and store them securely.")
@@ -424,11 +446,6 @@ def show_dashboard():
             else:
                 st.info("No reports uploaded yet.")
 
-                
-
-    # -----------------------
-    # Tab 4: Appointments (form saved to DB)
-    # -----------------------
     with tabs[3]:
         st.header("📅 Book Doctor Appointment")
         st.write("Schedule appointments with healthcare professionals.")
@@ -448,7 +465,6 @@ def show_dashboard():
             followup = st.checkbox("Follow-up Appointment")
             submit_apt = st.form_submit_button("Confirm Appointment")
             if submit_apt:
-                # save to DB
                 c.execute(
                     """
                     INSERT INTO appointments (username, patient_name, age, gender, phone, email, department, doctor, date, time, type, symptoms, emergency, followup, created_at)
@@ -477,7 +493,11 @@ def show_dashboard():
 
         st.divider()
         st.subheader("Your Appointments")
-        c.execute("SELECT id, doctor, date, time, status FROM appointments WHERE username=? ORDER BY created_at DESC LIMIT 10", (st.session_state.user,))
+        # Note: some DB rows may not have 'status' column (keeps compatibility)
+        try:
+            c.execute("SELECT id, doctor, date, time, COALESCE(status,'Confirmed') FROM appointments WHERE username=? ORDER BY created_at DESC LIMIT 10", (st.session_state.user,))
+        except Exception:
+            c.execute("SELECT id, doctor, date, time, '' FROM appointments WHERE username=? ORDER BY created_at DESC LIMIT 10", (st.session_state.user,))
         appts = c.fetchall()
         if appts:
             for a in appts:
@@ -485,23 +505,57 @@ def show_dashboard():
         else:
             st.info("No appointments found.")
 
-    # -----------------------
-    # Tab 5: Prescriptions & Pharmacy (basic)
-    # -----------------------
+
     with tabs[4]:
         st.header("💊 Prescriptions & Pharmacy")
-        st.write("AI can suggest OTC meds for simple symptoms (educational only).")
-        symptom_input = st.text_area("Describe symptoms e.g. fever, sore throat, cough")
-        if st.button("Generate Suggestion"):
-            if symptom_input.strip():
-                ai_text = gemini_medical_answer(f"Suggest general over-the-counter medicines and home remedies for: {symptom_input}")
-                st.markdown("### Suggested (Educational Only)")
-                st.write(ai_text)
-            else:
-                st.warning("Please describe symptoms.")
+        st.write("AI can suggest OTC meds for simple symptoms (educational only). Saved suggestions are stored to your account.")
+
+        # ===== AI Suggestion & Save =====
+        st.subheader("Generate & Save Prescription (Educational Only)")
+        symptom_input = st.text_area("Describe symptoms e.g. fever, sore throat, cough", key="symp_input")
+        col_a, col_b = st.columns([3,1])
+        with col_a:
+            if st.button("Generate Suggestion"):
+                if symptom_input.strip():
+                    with st.spinner("Asking AI..."):
+                        ai_text = gemini_medical_answer(f"Suggest general over-the-counter medicines and home remedies for: {symptom_input}. Keep it educational only, concise.")
+                        st.markdown("### Suggested (Educational Only)")
+                        st.write(ai_text)
+                        # Save to prescriptions DB
+                        try:
+                            save_prescription_to_db(st.session_state.user, symptom_input, ai_text)
+                            st.success("Saved suggestion to your prescriptions.")
+                        except Exception as e:
+                            st.error(f"Failed to save prescription: {e}")
+                else:
+                    st.warning("Please describe symptoms before generating suggestions.")
+        with col_b:
+            st.info("Saved prescriptions appear below. You can download or delete them.")
 
         st.divider()
-        st.subheader("Pharmacy (Demo)")
+        st.subheader("Your Saved Prescriptions")
+        prescs = get_user_prescriptions(st.session_state.user)
+        if prescs:
+            for pid, sym, sug, created in prescs:
+                with st.expander(f"{created} — {sym[:80]}{'...' if len(sym) > 80 else ''}"):
+                    st.write(sug)
+                    dcol1, dcol2, dcol3 = st.columns([1,1,2])
+                    with dcol1:
+                        if st.button(f"Download #{pid}", key=f"dl_{pid}"):
+                            bio = prescription_to_bytes(sym, sug, created, st.session_state.user)
+                            st.download_button(label="Download .txt", data=bio.getvalue(), file_name=f"prescription_{pid}.txt", mime="text/plain")
+                    with dcol2:
+                        if st.button(f"Delete #{pid}", key=f"del_{pid}"):
+                            delete_prescription(pid)
+                            st.experimental_rerun()
+                    with dcol3:
+                        st.write("⚠ This is educational info only — not a formal prescription.")
+
+        else:
+            st.info("No saved prescriptions yet.")
+
+        st.divider()
+        st.subheader("🛒 Pharmacy (Demo)")
         meds = [
             {"name": "Paracetamol", "dosage": "500mg", "price": 50},
             {"name": "Ibuprofen", "dosage": "400mg", "price": 80},
@@ -515,12 +569,10 @@ def show_dashboard():
                 st.write(f"₹{med['price']}")
                 qty = st.number_input(f"Qty {med['name']}", min_value=0, max_value=10, value=0, key=f"qty_{idx}")
                 if st.button(f"Add {med['name']}", key=f"add_{idx}") and qty > 0:
-                    if "cart" not in st.session_state:
-                        st.session_state.cart = {}
                     st.session_state.cart[med['name']] = {"qty": qty, "total": med['price'] * qty}
                     st.success("Added to cart")
 
-        if "cart" in st.session_state and st.session_state.cart:
+        if st.session_state.cart:
             st.divider()
             st.subheader("Cart")
             total = 0
@@ -532,29 +584,69 @@ def show_dashboard():
                 st.success("Order placed (demo).")
                 st.session_state.cart = {}
 
-    # -----------------------
-    # Tab 6: Health Dashboard (summary)
-    # -----------------------
+    
     with tabs[5]:
         st.header("📊 Health Dashboard")
         st.write("Summary of your activity")
+
         # quick metrics (from DB)
         c.execute("SELECT COUNT(*) FROM appointments WHERE username=?", (st.session_state.user,))
         total_appointments = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM medical_reports WHERE username=?", (st.session_state.user,))
         total_reports = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM appointments WHERE username=? AND emergency=1", (st.session_state.user,))
-        emergency_count = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM prescriptions WHERE username=?", (st.session_state.user,))
+        total_prescriptions = c.fetchone()[0]
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Appointments", total_appointments)
         col2.metric("Reports", total_reports)
-        col3.metric("Emergencies", emergency_count)
+        col3.metric("Prescriptions", total_prescriptions)
 
         st.markdown("### Recent activity")
         c.execute("SELECT date, doctor, type FROM appointments WHERE username=? ORDER BY created_at DESC LIMIT 5", (st.session_state.user,))
-        for row in c.fetchall():
-            st.write(f"{row[0]} — {row[1]} — {row[2]}")
+        recent = c.fetchall()
+        if recent:
+            for row in recent:
+                st.write(f"{row[0]} — {row[1]} — {row[2]}")
+        else:
+            st.info("No recent appointments to show.")
+
+        st.markdown("---")
+        st.subheader("Appointments per Month")
+        # simple grouping by year-month from date field
+        c.execute("SELECT substr(date,1,7) as ym, COUNT(*) as cnt FROM appointments WHERE username=? GROUP BY ym ORDER BY ym ASC", (st.session_state.user,))
+        rows = c.fetchall()
+        if rows:
+            months = [r[0] for r in rows]
+            counts = [r[1] for r in rows]
+            fig, ax = plt.subplots()
+            ax.bar(months, counts)
+            ax.set_xlabel("Month")
+            ax.set_ylabel("Appointments")
+            ax.set_title("Appointments per Month")
+            plt.xticks(rotation=45)
+            st.pyplot(fig)
+        else:
+            st.info("No appointment history to chart.")
+
+        st.subheader("Report Types Distribution")
+        c.execute("SELECT type, COUNT(*) FROM medical_reports WHERE username=? GROUP BY type", (st.session_state.user,))
+        rows = c.fetchall()
+        if rows:
+            labels = [r[0] for r in rows]
+            sizes = [r[1] for r in rows]
+            fig2, ax2 = plt.subplots()
+            ax2.pie(sizes, labels=labels, autopct="%1.1f%%")
+            ax2.set_title("Report Types")
+            st.pyplot(fig2)
+        else:
+            st.info("No reports uploaded yet to show distribution.")
+
+        st.markdown("---")
+        st.subheader("Generate Daily Health Tip")
+        if st.button("Generate Tip"):
+            tip = gemini_medical_answer("Give a short, motivating daily health tip for general wellness (one or two sentences).")
+            st.success(tip)
 
     # footer disclaimer
     st.markdown("---")
@@ -562,10 +654,6 @@ def show_dashboard():
         "<div style='padding:10px; font-size:12px; color:#e8f0ff'>⚠ This AI provides general medical information only. It is NOT a substitute for professional medical advice.</div>",
         unsafe_allow_html=True,
     )
-
-# -----------------------
-# Main controller
-# -----------------------
 def main():
     st.sidebar.title("AI Health")
     if st.session_state.logged_in:
